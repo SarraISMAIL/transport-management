@@ -314,3 +314,175 @@ export const jobService = {
     return data
   }
 }
+
+// Tracking operations
+export const trackingService = {
+  async getDriverTracking(driverId: string, limit: number = 100): Promise<TrackingData[]> {
+    const { data, error } = await supabase
+      .from('tracking_data')
+      .select('*')
+      .eq('driver_id', driverId)
+      .order('timestamp', { ascending: false })
+      .limit(limit)
+
+    if (error) throw error
+    return data || []
+  },
+
+  async getJobTracking(jobId: string): Promise<TrackingData[]> {
+    const { data, error } = await supabase
+      .from('tracking_data')
+      .select('*')
+      .eq('job_id', jobId)
+      .order('timestamp', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  }
+}
+
+// Maintenance operations
+export const maintenanceService = {
+  async getVehicleMaintenanceRecords(vehicleId: string): Promise<MaintenanceRecord[]> {
+    const { data, error } = await supabase
+      .from('maintenance_records')
+      .select(`
+        *,
+        vehicle:vehicles(*)
+      `)
+      .eq('vehicle_id', vehicleId)
+      .order('performed_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  },
+
+  async createMaintenanceRecord(record: Omit<MaintenanceRecord, 'id' | 'created_at' | 'updated_at'>): Promise<MaintenanceRecord> {
+    const { data, error } = await supabase
+      .from('maintenance_records')
+      .insert(record)
+      .select(`
+        *,
+        vehicle:vehicles(*)
+      `)
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  async getUpcomingMaintenance(): Promise<Vehicle[]> {
+    const { data, error } = await supabase
+      .from('vehicles')
+      .select('*')
+      .not('next_maintenance', 'is', null)
+      .lte('next_maintenance', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()) // Next 30 days
+      .order('next_maintenance', { ascending: true })
+
+    if (error) throw error
+    return data || []
+  }
+}
+
+// Fuel operations
+export const fuelService = {
+  async getVehicleFuelRecords(vehicleId: string): Promise<FuelRecord[]> {
+    const { data, error } = await supabase
+      .from('fuel_records')
+      .select(`
+        *,
+        vehicle:vehicles(*),
+        driver:drivers(*, user:users(*))
+      `)
+      .eq('vehicle_id', vehicleId)
+      .order('timestamp', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  },
+
+  async createFuelRecord(record: Omit<FuelRecord, 'id' | 'created_at'>): Promise<FuelRecord> {
+    const { data, error } = await supabase
+      .from('fuel_records')
+      .insert(record)
+      .select(`
+        *,
+        vehicle:vehicles(*),
+        driver:drivers(*, user:users(*))
+      `)
+      .single()
+
+    if (error) throw error
+    return data
+  }
+}
+
+// Notification operations
+export const notificationService = {
+  async getUserNotifications(userId: string): Promise<Notification[]> {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  },
+
+  async markNotificationAsRead(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('id', id)
+
+    if (error) throw error
+  },
+
+  async createNotification(notification: Omit<Notification, 'id' | 'created_at'>): Promise<Notification> {
+    const { data, error } = await supabase
+      .from('notifications')
+      .insert(notification)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  }
+}
+
+// Dashboard operations
+export const dashboardService = {
+  async getDashboardStats(): Promise<DashboardStats> {
+    const [
+      { count: totalJobs },
+      { count: activeJobs },
+      { count: completedJobs },
+      { count: totalDrivers },
+      { count: availableDrivers },
+      { count: totalVehicles },
+      { count: availableVehicles },
+      maintenanceDue
+    ] = await Promise.all([
+      supabase.from('jobs').select('*', { count: 'exact', head: true }),
+      supabase.from('jobs').select('*', { count: 'exact', head: true }).in('status', ['assigned', 'in_progress']),
+      supabase.from('jobs').select('*', { count: 'exact', head: true }).eq('status', 'completed'),
+      supabase.from('drivers').select('*', { count: 'exact', head: true }),
+      supabase.from('drivers').select('*', { count: 'exact', head: true }).eq('status', 'available'),
+      supabase.from('vehicles').select('*', { count: 'exact', head: true }),
+      supabase.from('vehicles').select('*', { count: 'exact', head: true }).eq('status', 'available'),
+      maintenanceService.getUpcomingMaintenance()
+    ])
+
+    return {
+      total_jobs: totalJobs || 0,
+      active_jobs: activeJobs || 0,
+      completed_jobs: completedJobs || 0,
+      total_drivers: totalDrivers || 0,
+      available_drivers: availableDrivers || 0,
+      total_vehicles: totalVehicles || 0,
+      available_vehicles: availableVehicles || 0,
+      maintenance_due: maintenanceDue.length
+    }
+  }
+}
